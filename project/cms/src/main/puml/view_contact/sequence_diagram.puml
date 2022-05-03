@@ -1,0 +1,40 @@
+@startuml
+
+title "View Contact"
+
+actor User
+
+User -> ContactsView: Clicks on the name of the contact which is desired to view
+
+ContactsView -> ContactsPresenter: Triggers onClick event
+
+ContactsPresenter --> ContactsView: Asks for the index of selected row
+
+ContactsView --> ContactsPresenter: Integer representing the index of the selected row
+
+ContactsPresenter -> ContactsPresenter: Get contact id (getContactDetail(rowIndex).id;)
+
+create ViewContactEvent
+ContactsPresenter -> ViewContactEvent: Creates event for view contact using contact id
+
+ContactsPresenter -> HandlerManager: Fires a ViewContact event (fireEvent(viewContactEvent));
+
+create ViewContactEventHandler
+HandlerManager -> ViewContactEventHandler: Creates handler for view contact event
+
+ViewContactEventHandler -> Database: Queries contact information (SELECT C FROM CONTACTS WHERE C.id = id;)
+
+Database --> ViewContactEventHandler : Row with the contact information
+
+create Contact
+ViewContactEventHandler -> Contact: Creates contact model with given information
+
+create ViewContactPresenter
+ViewContactEventHandler -> ViewContactPresenter: Creates presenter with contact model
+
+create ViewContactView
+ViewContactPresenter -> ViewContactView: Creates view with contact details
+
+ViewContactView --> User: Displays contact information
+
+@enduml

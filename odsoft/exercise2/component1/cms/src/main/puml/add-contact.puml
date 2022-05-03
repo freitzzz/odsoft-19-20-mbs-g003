@@ -1,0 +1,11 @@
+@startuml add-contact_sequence
+actor User
+
+User -> BrowserClient: Wants to add contact
+BrowserClient -> User: Shows form with firstname, lastname and email
+User -> BrowserClient: Inserts the data in form
+BrowserClient -> Server: Add new contact (data)
+Server -> Server: Insert new contact
+Server -> BrowserClient: Success
+BrowserClient -> User: Show updated list with new contact
+@enduml

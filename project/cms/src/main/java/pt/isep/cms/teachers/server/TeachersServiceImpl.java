@@ -1,0 +1,58 @@
+package pt.isep.cms.teachers.server;
+
+import com.google.gwt.user.server.rpc.RemoteServiceServlet;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+
+import pt.isep.cms.contacts.shared.Contact;
+import pt.isep.cms.teachers.client.TeachersService;
+import pt.isep.cms.teachers.shared.Teacher;
+import pt.isep.cms.teachers.shared.TeacherDetails;
+
+@SuppressWarnings("serial")
+public class TeachersServiceImpl extends RemoteServiceServlet implements
+    TeachersService {
+      
+  private final HashMap<Long, Teacher> teachers = new HashMap<Long, Teacher>();
+
+  public TeachersServiceImpl() {
+    initTeachers();
+  }
+  
+  private void initTeachers() {
+	  
+  }
+
+	@Override
+	public Teacher addTeacher(Teacher teacher) {
+		
+		long id = teachers.size();
+		
+		id++;
+		
+		teacher.changeId(id);
+		
+		teachers.put(id, teacher);
+		
+		return teacher;
+		
+	}
+
+	@Override
+	public ArrayList<TeacherDetails> getTeacherDetails() {
+		ArrayList<TeacherDetails> teacherDetails = new ArrayList<TeacherDetails>();
+		
+		Iterator<Long> ids = teachers.keySet().iterator();
+	    
+		while(ids.hasNext()) {
+			
+			Teacher teacher = teachers.get(ids.next());
+			
+			teacherDetails.add(new TeacherDetails(teacher.name()));
+			
+	    }
+		
+		return teacherDetails;
+	}
+}

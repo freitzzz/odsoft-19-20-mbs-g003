@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact name="cms.main:GWT">
+    <output-path>$PROJECT_DIR$/out/artifacts/cms_main_GWT</output-path>
+    <root id="root">
+      <element id="gwt-compiler-output" facet="cms.main/gwt/GWT" />
+    </root>
+  </artifact>
+</component>

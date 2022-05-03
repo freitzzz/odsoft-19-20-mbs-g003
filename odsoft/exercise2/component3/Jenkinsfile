@@ -1,0 +1,147 @@
+#!/usr/bin/env groovy
+def run_command(command){
+  def running_in_unix = isUnix()
+
+  if(running_in_unix){
+    sh command
+  }else{
+    bat command
+  }
+}
+
+def run_gradlew(gradlew_commands){
+  def running_in_unix = isUnix()
+  
+  if(running_in_unix){
+    run_command("./gradlew ${gradlew_commands}")
+  }else{
+    run_command("gradlew.bat ${gradlew_commands}")
+  }
+}
+
+def get_bitbucket_username(){
+  withCredentials([[$class: 'UsernamePasswordMultiBinding',
+    credentialsId: "759f7254-5d4e-40c5-be07-906e8bb03a1a",
+    usernameVariable: 'GIT_USERNAME', 
+    passwordVariable: 'GIT_PASSWORD']]) {
+      return env.GIT_USERNAME
+    }
+}
+
+// Allows the retrieval of the bitbucket username defined in bitbucketCredentials authentication keys
+def get_bitbucket_password(){
+  withCredentials([[$class: 'UsernamePasswordMultiBinding',
+    credentialsId: "759f7254-5d4e-40c5-be07-906e8bb03a1a",
+    usernameVariable: 'GIT_USERNAME', 
+    passwordVariable: 'GIT_PASSWORD']]) {
+      return env.GIT_PASSWORD
+    }
+}
+
+def get_http_request(uri){
+  sh "curl -sSf ${uri} > /dev/null"
+}
+
+node {
+  def passed_build_tag_name = "C3-${env.BUILD_ID}-PASSED"
+  def failed_build_tag_name = "BC3-${env.BUILD_ID}-FAILED"
+
+  // Tomcat webserver URI
+  def tomcat_server_url = "http://tomcat:8080/"
+
+  // BITBUCKET AUTH
+  def bitbucket_username = get_bitbucket_username()
+  def bitbucket_password = get_bitbucket_password()
+
+  def cms_path = "${WORKSPACE}/odsoft/exercise1/component3/cms"
+
+  stage ("Checkout"){
+    checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '759f7254-5d4e-40c5-be07-906e8bb03a1a', url: 'https://bitbucket.org/mei-isep/odsoft-19-20-mbs-g003']]])
+    run_command("git config --local user.name 'Portela' && git config --local user.email '1150782@isep.ipp.pt'")
+  }
+
+  stage("Test"){
+    dir("${WORKSPACE}/odsoft/exercise1/component3/cms"){
+      try{
+        run_gradlew("test jacocoTestReport")
+        run_gradlew("integrationTest jacocoIntegrationReport")
+        run_gradlew("pitest")
+      }catch(_error){
+        run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+        error("Pipeline build failed due to: ${_error}")
+      }
+    }
+  }
+
+  stage("Build") {
+    dir("${WORKSPACE}/odsoft/exercise1/component3/cms"){
+      try{
+        run_gradlew("war")
+        run_gradlew("javadoc")
+      }catch(_error){
+        run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+        error("Pipeline build failed due to: ${_error}")
+      }
+    }
+  }
+
+  stage("Artifacts Publish"){
+    try{
+      // Unit Tests Report
+      publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "odsoft/exercise1/component3/cms/build/reports/test/", reportFiles: 'index.html', reportName: 'UnitTestReport', reportTitles: ''])
+      
+      // Unit Tests Coverage Report
+      publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "odsoft/exercise1/component3/cms/build/reports/jacoco/test/html/", reportFiles: 'index.html', reportName: 'UnitTestCoverageReport', reportTitles: ''])
+      
+      // Integration Tests Report
+      publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "odsoft/exercise1/component3/cms/build/reports/integrationTest/", reportFiles: 'index.html', reportName: 'IntegrationTestReport', reportTitles: ''])
+      
+      // Integration Tests Coverage Report
+      publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "odsoft/exercise1/component3/cms/build/reports/jacoco/jacocoIntegrationReport/html", reportFiles: 'index.html', reportName: 'IntegrationTestCoverageReport', reportTitles: ''])
+      
+      // Mutation Test Report
+      publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "odsoft/exercise1/component3/cms/build/reports/pitest/", reportFiles: 'index.html', reportName: 'MutationTestReport', reportTitles: ''])
+      
+      // Publish .war
+      archiveArtifacts artifacts: 'odsoft/exercise1/component3/cms/build/libs/cms-1.0.war', fingerprint: true
+      
+      // Publish Javadoc
+      //step $class: 'JavadocArchiver', javadocDir: 'build/docs/javadoc', keepAll: false   
+      publishHTML([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "build/docs/javadoc/", reportFiles: 'index.html', reportName: 'Javadoc', reportTitles: ''])
+    }catch(_error){
+      run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+      error("Pipeline build failed due to: ${_error}")
+    }
+  }
+  
+  stage("Deploy"){
+    try{
+      deploy adapters: [tomcat9(credentialsId: 'c230451e-9dee-4c18-a86a-19a1376f0aa4', path: '', url: 'http://tomcat:8080')], contextPath: 'cms', onFailure: false, war: 'odsoft/exercise1/component3/cms/build/libs/cms-1.0.war'
+    }catch(_error){
+      run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+      error("Pipeline build failed due to: ${_error}")
+    }
+  }
+
+  stage("Healtcheck") {
+    try{
+      get_http_request("${tomcat_server_url}/cms")
+    } catch(_error){
+      run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+      error("Pipeline build failed due to: ${_error}")
+    }
+  }
+
+  stage("UI Acceptance") {
+    try{      
+      mail to:"1150782@isep.ipp.pt", subject:"JENKINS: Manual Acceptance Testing", body: "Please review and test web server at http://localhost:8080"
+      
+      input 'Do you approve deployment?'
+      
+      run_command("git tag ${passed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${passed_build_tag_name}")
+    } catch(_error){
+      run_command("git tag ${failed_build_tag_name} && git push https://pedro_portela:86iyZksDzfaEgL@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+      error("Pipeline build failed due to: ${_error}")
+    }
+  }
+}

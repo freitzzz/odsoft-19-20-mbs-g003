@@ -1,0 +1,32 @@
+@startuml
+
+title "Update Contact"
+
+actor User
+
+User -> BrowserClient: Clicks on the desired contact
+
+BrowserClient -> BrowserClient: Gets ID of selected user
+
+BrowserClient -> Server: Fetches user information (userID)
+
+Server -> Database: Gets user data (userID)
+
+Database -> Server: Sends user data (user)
+
+Server -> BrowserClient: Returns user
+
+BrowserClient -> User: Shows clicked user information
+
+User -> BrowserClient: Updates user data
+
+BrowserClient -> Server: Update user data (userID, data)
+
+Server -> Database: update user (userID, data)
+
+Server -> BrowserClient: Returns success
+
+BrowserClient -> BrowserClient: updates user data
+
+BrowserClient -> User: Shows success message
+@enduml

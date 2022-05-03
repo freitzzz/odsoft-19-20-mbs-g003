@@ -1,0 +1,115 @@
+// Runs gradle wrapper located in the folder of the current running execution environment
+void run_gradlew(String gradlew_commands){
+
+  def running_in_unix = isUnix()
+  
+  if(running_in_unix){
+    run_command("./gradlew ${gradlew_commands}")
+  }else{
+    run_command("gradlew.bat ${gradlew_commands}")
+  }
+}
+
+// Runs a command on the system defined interface (if in Unix system calls sh, else bat for Windows)
+def run_command(command){
+  
+  def running_in_unix = isUnix()
+
+  if(running_in_unix){
+    sh command
+  }else{
+    bat command
+  }
+}
+
+pipeline {
+	options {
+        parallelsAlwaysFailFast()
+    }
+	agent any
+	stages {
+		stage("Test") {
+			parallel {
+				stage('Unit test') {
+					steps {
+						dir("${env.WORKSPACE}/project/cms") {
+							run_gradlew("test jacocoTestReport")
+						}
+					}
+				}
+				stage('Integration test') {
+					steps {
+						dir("${env.WORKSPACE}/project/cms") {
+							run_gradlew("integrationTest jacocoIntegrationReport")
+						}
+					}
+				}
+				stage('Mutation testing') {
+					steps {
+						dir("${env.WORKSPACE}/project/cms") {
+							run_gradlew("pitest")
+						}
+					}
+				}
+			}
+			post {
+				success {
+					// publish unit tests report
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "project/cms/build/reports/test/", reportFiles: 'index.html', reportName: 'Unit test report', reportTitles: ''])
+
+					// publish unit test coverage
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "project/cms/build/jacocoHtml/", reportFiles: 'index.html', reportName: 'Unit test coverage', reportTitles: ''])
+
+					// publish integration test report
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "project/cms/build/reports/integrationTest/", reportFiles: 'index.html', reportName: 'Integration test report', reportTitles: ''])
+
+					// publish integration tests coverage
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "project/cms/build/jacocoIntegrationHtml/", reportFiles: 'index.html', reportName: 'Integration test coverage', reportTitles: ''])
+
+					// publish mutation tests report
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "project/cms/build/reports/pitest/", reportFiles: 'index.html', reportName: 'Mutation test report', reportTitles: ''])
+				}
+			}
+		}
+		stage('Build Artifacts') {
+			parallel {
+				stage('Javadoc') {
+					steps {
+						dir("${env.WORKSPACE}/project/cms") {
+							run_gradlew("javadoc")
+						}
+					}
+				}
+				stage('WAR') {
+					steps {
+						dir("${env.WORKSPACE}/project/cms") {
+							run_gradlew("war")
+						}
+					}
+				}
+			}
+			post {
+				success {
+					// publish javadocs
+					publishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: "project/cms/build/docs/javadoc/", reportFiles: 'index.html', reportName: 'Javadoc', reportTitles: ''])
+
+					// artifact generated war file
+					archiveArtifacts artifacts: 'project/cms/build/libs/*.war', fingerprint: true
+				}
+			}
+		}
+		stage('Deploy') {
+			when {
+				branch 'master'
+				buildingTag()
+			}
+			input {
+				message "Deploy?"
+				ok "Yes"
+			}
+			steps {
+				deploy adapters: [tomcat9(credentialsId: 'tomcat', path: '', url: 'http://tomcat:8080')], contextPath: 'cms', war: "project/cms/build/libs/*.war"
+			}
+		}
+	}
+}

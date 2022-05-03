@@ -1,0 +1,200 @@
+#!/usr/bin/env groovy
+
+// Runs a command on the system defined interface (if in Unix system calls sh, else bat for Windows)
+def run_command(command){
+  
+  def running_in_unix = isUnix()
+
+  if(running_in_unix){
+    sh command
+  }else{
+    bat command
+  }
+}
+
+// Runs gradle wrapper located in the folder of the current running execution environment
+def run_gradlew(gradlew_commands){
+
+  def running_in_unix = isUnix()
+  
+  if(running_in_unix){
+    run_command("./gradlew ${gradlew_commands}")
+  }else{
+    run_command("gradlew.bat ${gradlew_commands}")
+  }
+}
+
+// Allows the retrieval of the bitbucket username defined in bitbucketCredentials authentication keys
+def get_bitbucket_username(){
+  withCredentials([[$class: 'UsernamePasswordMultiBinding',
+    credentialsId: "bitbucketCredentials",
+    usernameVariable: 'GIT_USERNAME', 
+    passwordVariable: 'GIT_PASSWORD']]) {
+      return env.GIT_USERNAME
+    }
+}
+
+// Allows the retrieval of the bitbucket username defined in bitbucketCredentials authentication keys
+def get_bitbucket_password(){
+  withCredentials([[$class: 'UsernamePasswordMultiBinding',
+    credentialsId: "bitbucketCredentials",
+    usernameVariable: 'GIT_USERNAME', 
+    passwordVariable: 'GIT_PASSWORD']]) {
+      return env.GIT_PASSWORD
+    }
+}
+
+// Resolves a given path by replacing either / with \\ in Windows, or replacing \\ with / in Unix systems
+def resolve_path(path){
+  def running_in_unix = isUnix()
+
+  if(running_in_unix){
+    return path.replaceAll("\\+", "/")
+  }else{
+    return path.replaceAll("/", "\\\\")
+  }
+}
+
+// Executes a GET HTTP request. In Unix system uses curl, Invoke-RestMethod on Windows using powershell
+def get_http_request(uri){
+  def running_in_unix = isUnix()
+
+  if(running_in_unix){
+    sh "curl ${uri}"
+  }else{
+    powershell "Invoke-RestMethod -Uri ${uri}"
+  }
+}
+
+node {
+
+  // This variable marks the name of the tag that will be pushed to repository
+  // if the pipeline build succeeds
+  def passed_build_tag_name = "Build#${env.BUILD_ID}-Passed"
+
+  // This variable marks the name of the tag that will be pushed to repository
+  // if the pipeline build fails
+  def failed_build_tag_name = "Build#${env.BUILD_ID}-Failed"
+
+  // Indicates the URL in which the Tomcat Server is running
+  def tomcat_server_url = "http://172.18.0.1:80/"
+
+  // Indicates the username to be used in bitbucket repositories
+  def bitbucket_username = get_bitbucket_username()
+
+  // Indicates the password to be used in bitbucket repositories
+  def bitbucket_password = get_bitbucket_password()
+
+  // Indicates the relative path to cms folder
+  def cms_path = "${env.WORKSPACE}${resolve_path("/odsoft/exercise2/component4/cms")}"
+
+
+  stage ("Checkout"){
+    // Performs a Git checkout of the repository using Bitbucket credentials stored in Jenkins
+    checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'bitbucket', url: 'https://bitbucket.org/mei-isep/odsoft-19-20-mbs-g003']]])
+    run_command("git config --local user.name 'Pipeline' && git config --local user.email '1160907@isep.ipp.pt'")
+  }
+
+  stage ("Pre Build Tests"){
+    // First we need to change directory to the folder in which 
+    // the tests need to be run
+    dir(cms_path){
+
+      // Unit, Integration and Mutation Tests can be run in parallel
+      parallel_steps = [:]
+      
+      // Unit Tests Execution + Unit Tests Report Generation + Unit Tests Coverage Report Generation
+      parallel_steps["test"] = {run_gradlew("test jacocoTestReport")}
+
+      // Integration Tests Execution + Integration Tests Report Generation + Integration Tests Coverage Report Generation
+      parallel_steps["integrationTest"] = {run_gradlew("integrationTest jacocoIntegrationReport")}
+
+      // Mutation Tests + Mutation Tests Report Generation
+      parallel_steps["mutationTest"] = {run_gradlew("pitest")}
+
+      // If any of the tests fail, it is necessary to push a tag to repository
+      try{
+        parallel parallel_steps
+      }catch(_error){
+        run_command("git tag -a ${failed_build_tag_name} -m \"(Jenkins) Pre Build Tests stage failed in parallel execution\" && git push https://${bitbucket_username}:${bitbucket_password}@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+        error("Pipeline build failed due to: ${_error}")
+      }
+    }
+  }
+
+  stage("Artifacts Build"){
+    // First we need to change directory to the folder in which 
+    // the artifacts will be built
+    dir(cms_path){
+
+      // Javadoc doesn't depend on the war file build so the build of this artifacts
+      // can be done in parallel
+      parallel_steps = [:]
+      
+      // War artifact build
+      parallel_steps["war"] = {run_gradlew("war")}
+
+      // Javadoc artifact build
+      parallel_steps["javadoc"] = {run_gradlew("javadoc")}
+
+      // If artifacts build fail, it is necessary to push a tag to repository
+      try{
+        parallel parallel_steps
+      }catch(_error){
+        run_command("git tag -a ${failed_build_tag_name} -m \"(Jenkins) Artifacts Build stage failed in parallel execution\" && git push https://${bitbucket_username}:${bitbucket_password}@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+        error("Pipeline build failed due to: ${_error}")
+      }
+    }
+  }
+
+  stage("Artifacts Publish"){
+      // Artifacts publish has no dependencies so it can be done in parallel
+      parallel_steps = [:]
+      
+      // Unit Tests Report Publish
+      parallel_steps["unit_tests_report_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/reports/test/")}", reportFiles: 'index.html', reportName: 'Unit Test Report', reportTitles: ''])}
+
+      // Unit Tests Coverage Report Publish
+      parallel_steps["unit_tests_coverage_report_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/jacocoHtml/")}", reportFiles: 'index.html', reportName: 'Unit Test Coverage Report', reportTitles: ''])}
+
+      // Integration Tests Report Publish
+      parallel_steps["integration_tests_report_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/reports/integrationTest/")}", reportFiles: 'index.html', reportName: 'Integration Test Report', reportTitles: ''])}
+
+      // Integration Tests Coverage Report Publish
+      parallel_steps["integration_tests_coverage_report_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/jacocoIntegrationHtml/")}", reportFiles: 'index.html', reportName: 'Integration Test Coverage Report', reportTitles: ''])}
+
+      // Mutation Tests Report Publish
+      parallel_steps["mutation_tests_report_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/reports/pitest/")}", reportFiles: 'index.html', reportName: 'Mutation Test Report', reportTitles: ''])}
+
+      // War Artifact Publish
+      parallel_steps["war_artifact_publish"] = {archiveArtifacts "${resolve_path("odsoft/exercise2/component4/cms/build/libs/")}*.war"}
+
+      // Javadoc Artifact Publish
+      parallel_steps["javadoc_artifact_publish"] = {publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "${resolve_path("odsoft/exercise2/component4/cms/build/docs/javadoc/")}", reportFiles: 'index.html', reportName: 'Javadoc', reportTitles: ''])}
+
+      // If artifacts publish fail, it is necessary to push a tag to repository
+      try{
+        parallel parallel_steps
+      }catch(_error){
+        run_command("git tag -a ${failed_build_tag_name} -m \"(Jenkins) Artifacts Publish stage failed in parallel execution\" && git push https://${bitbucket_username}:${bitbucket_password}@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+        error("Pipeline build failed due to: ${_error}")
+      }
+  }
+  
+  stage("Deploy and Post Build Tests"){
+    try{
+        deploy adapters: [tomcat9(credentialsId: 'tomcat', path: '', url: tomcat_server_url)], contextPath: 'cms', war: "${resolve_path("odsoft/exercise2/component4/cms/build/libs/")}*.war"
+        
+        get_http_request("${tomcat_server_url}/cms")
+        
+        mail bcc: '', body: 'The pipeline is waiting for you!', cc: '', from: '1160907@isep.ipp.pt', replyTo: '', subject: 'Jenkins Build Manual Tests', to: '1160907@isep.ipp.pt'
+        
+        input 'Are you ready to continue the pipeline?'
+        
+        run_command("git tag -a ${passed_build_tag_name} -m \"(Jenkins) Pipeline build completed with success\" && git push https://${bitbucket_username}:${bitbucket_password}@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${passed_build_tag_name}")
+    }catch(_error){
+      run_command("git tag -a ${failed_build_tag_name} -m \"(Jenkins) Deploy stage failed\" && git push https://${bitbucket_username}:${bitbucket_password}@bitbucket.org/mei-isep/odsoft-19-20-mbs-g003.git ${failed_build_tag_name}")
+      error("Pipeline build failed due to: ${_error}")
+    }
+  }
+}

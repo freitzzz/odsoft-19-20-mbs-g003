@@ -1,0 +1,32 @@
+version: '2'
+services:
+  jenkins:
+    image: 'jenkins/jenkins:lts'
+    environment:
+      - JAVA_OPTS=-Djava.awt.headless=true -Dmail.smtp.starttls.enable=true
+    labels:
+      kompose.service.type: nodeport
+    ports:
+      - '80:8080'
+      - '443:8443'
+      - '50000:50000'
+    volumes:
+      - 'jenkins_home:/var/jenkins_home'
+    networks:
+      - bridge
+  tomcat:
+    image: 'tomcat:9.0.27-jdk8-openjdk'
+    ports:
+      - '8080:8080'
+    networks:
+      - bridge
+    volumes:
+      - 'tomcat_conf:/usr/local/tomcat'
+
+jenkins_home:
+  driver: local
+tomcat_conf:
+  driver: local
+
+networks: 
+  bridge:
